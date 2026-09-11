@@ -48,10 +48,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: - Status item
 
     private func buildStatusItem() {
-        // No air at all: the frame is already cut as close to the blades as
-        // their sweep allows, so the item is exactly as wide as the rotor and
-        // whatever gap shows either side is the menu bar's own.
-        statusItem = NSStatusBar.system.statusItem(withLength: RotorGlyph.pointSize)
+        // As wide as the rotor and no wider — rounded up to a whole point, which
+        // costs a quarter point either side and is worth it: on a fractional
+        // width AppKit renegotiates the item's geometry with the window server on
+        // every single redraw, which measured a third again as much CPU.
+        statusItem = NSStatusBar.system.statusItem(withLength: RotorGlyph.pointSize.rounded(.up))
 
         guard let button = statusItem.button else { return }
         button.setAccessibilityLabel("Vitesse du ventilateur")
@@ -127,7 +128,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.performClose(nil)
     }
 
+    func popoverDidShow(_ notification: Notification) {
+        rotor?.isHighlighted = true
+    }
+
     func popoverDidClose(_ notification: Notification) {
+        rotor?.isHighlighted = false
         statusItem.button?.isHighlighted = false
         stopWatchingForOutsideClicks()
         telemetry.setDetailed(false)
