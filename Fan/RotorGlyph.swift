@@ -12,8 +12,14 @@ import AppKit
 enum RotorGlyph {
 
     static let symbolName = "fanblades.fill"
-    /// Point size of the glyph inside the status item.
-    static let pointSize: CGFloat = 18
+    /// Point size the artwork is drawn at — the size of the rotor itself.
+    static let artworkSize: CGFloat = 18
+    /// Side of the square each frame is cut into, and so the width the status
+    /// item is built around. As tight as a frame goes: the blades sweep a circle
+    /// 15.8 points across, and the interpolation the rotation is resampled with
+    /// carries their edges a little further still — at 17 points the corners of
+    /// the widest frames are already being shaved.
+    static let pointSize: CGFloat = 17.5
     /// Pixels per point the master is drawn at.
     private static let sourceScale: CGFloat = 4
 
@@ -45,7 +51,7 @@ enum RotorGlyph {
     /// and thicken frame to frame. Turning finished pixels keeps the shape rigid,
     /// and the extra resolution is what the rotation gives away to interpolation.
     private static let master: CGImage? = {
-        let configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+        let configuration = NSImage.SymbolConfiguration(pointSize: artworkSize, weight: .regular)
         guard let symbol = NSImage(systemSymbolName: symbolName,
                                    accessibilityDescription: "Ventilateur")?
             .withSymbolConfiguration(configuration),
@@ -72,7 +78,7 @@ enum RotorGlyph {
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
 
-        let fitted = symbol.size.fitted(in: CGSize(width: pointSize, height: pointSize))
+        let fitted = symbol.size.fitted(in: CGSize(width: artworkSize, height: artworkSize))
         context.scaleBy(x: sourceScale, y: sourceScale)
 
         NSGraphicsContext.saveGraphicsState()

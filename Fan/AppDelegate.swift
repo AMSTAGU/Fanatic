@@ -48,7 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: - Status item
 
     private func buildStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: 26)
+        // No air at all: the frame is already cut as close to the blades as
+        // their sweep allows, so the item is exactly as wide as the rotor and
+        // whatever gap shows either side is the menu bar's own.
+        statusItem = NSStatusBar.system.statusItem(withLength: RotorGlyph.pointSize)
 
         guard let button = statusItem.button else { return }
         button.setAccessibilityLabel("Vitesse du ventilateur")
