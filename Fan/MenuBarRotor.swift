@@ -12,9 +12,10 @@
 //  What makes that look like motion rather than ticking is where the frames
 //  come from and when they land. A display link paces them against the screen's
 //  own refresh — the display the status item is actually on, at the rate it
-//  actually runs — so no frame is ever shown late or twice, and the frames
-//  themselves are cut every degree, fine enough that the step between two of
-//  them disappears. The link is paused whenever the blades are still.
+//  actually runs, left uncapped so the spin is as continuous as the layer's was
+//  — and the frames themselves are cut every degree, fine enough that the step
+//  between two of them disappears. The link is paused whenever the blades are
+//  still, and a tick that lands on the frame already shown costs nothing.
 //
 
 import AppKit
@@ -23,12 +24,6 @@ final class MenuBarRotor: NSObject {
 
     /// Frames in a full turn: one per degree.
     private static let frameCount = 360
-    /// How far the blades are allowed to travel between two frames. Three
-    /// degrees is below what the eye resolves at this size, and asking for it
-    /// rather than for every refresh is what keeps a slow drift cheap.
-    private static let degreesPerFrame: Double = 3
-    private static let slowestRefresh: Float = 10
-    private static let fastestRefresh: Float = 120
 
     private let button: NSStatusBarButton
     /// Cut on first use and kept: a full turn is a few megabytes of 18 point
@@ -94,12 +89,6 @@ final class MenuBarRotor: NSObject {
             return
         }
 
-        let wanted = min(Self.fastestRefresh,
-                         max(Self.slowestRefresh,
-                             Float(rate * 360 / Self.degreesPerFrame)))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: Self.slowestRefresh,
-                                                        maximum: Self.fastestRefresh,
-                                                        preferred: wanted)
         if link.isPaused {
             // The clock restarts with the blades: the pause is not time the
             // rotor spent turning.
