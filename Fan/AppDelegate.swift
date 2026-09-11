@@ -14,7 +14,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private var statusItem: NSStatusItem!
-    private let rotor = RotorView(frame: NSRect(x: 0, y: 0, width: 24, height: 22))
+    private var rotor: MenuBarRotor?
     private let telemetry = TelemetryService()
     private let store = TelemetryStore()
     private let popover = NSPopover()
@@ -56,9 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         button.action = #selector(togglePanel)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
-        rotor.frame = button.bounds
-        rotor.autoresizingMask = [.width, .height]
-        button.addSubview(rotor)
+        rotor = MenuBarRotor(button: button)
     }
 
     private func buildPanel() {
@@ -126,12 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.performClose(nil)
     }
 
-    func popoverDidShow(_ notification: Notification) {
-        rotor.isHighlighted = true
-    }
-
     func popoverDidClose(_ notification: Notification) {
-        rotor.isHighlighted = false
         statusItem.button?.isHighlighted = false
         stopWatchingForOutsideClicks()
         telemetry.setDetailed(false)
@@ -160,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func consume(_ telemetry: Telemetry) {
         latest = telemetry
-        rotor.setRevolutionsPerSecond(telemetry.rotorRevolutionsPerSecond)
+        rotor?.setRevolutionsPerSecond(telemetry.rotorRevolutionsPerSecond)
 
         let tooltip = tooltip(for: telemetry)
         if tooltip != statusItem.button?.toolTip {
@@ -191,7 +184,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         store.launchesAtLogin = SMAppService.mainApp.status == .enabled
     }
 
-    // MARK: - Power and visibility
+    // MARK: - Power
+
+    // Occlusion of the status item's window is deliberately *not* watched.
+    // It looks like a free way to stop working while the menu bar is hidden
+    // behind a full screen window, but that window reports itself occluded in
+    // situations where the menu bar is plainly visible — and since sampling
+    // only restarts on the next occlusion change, the app would sit there
+    // showing nothing. Display sleep, below, is both reliable and the case
+    // that actually saves power.
 
     private func observeSystemEvents() {
         let workspace = NSWorkspace.shared.notificationCenter
@@ -204,12 +205,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         workspace.addObserver(self, selector: #selector(resume),
                               name: NSWorkspace.didWakeNotification, object: nil)
 
-        // The menu bar hides behind full screen windows; stop drawing then too.
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(occlusionChanged(_:)),
-            name: NSWindow.didChangeOcclusionStateNotification,
-            object: statusItem.button?.window)
-
         // Honour the system's reduced-motion setting.
         workspace.addObserver(self, selector: #selector(motionPreferenceChanged),
                               name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
@@ -217,13 +212,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         applyMotionPreference()
     }
 
-    @objc private func occlusionChanged(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow else { return }
-        window.occlusionState.contains(.visible) ? resume() : suspend()
-    }
-
     @objc private func suspend() {
-        rotor.setSuspended(true)
+        rotor?.setSuspended(true)
         telemetry.stop()
     }
 
@@ -238,6 +228,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func applyMotionPreference() {
-        rotor.setSuspended(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        rotor?.setSuspended(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 }
