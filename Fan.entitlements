@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Reading fan speed, die temperatures and power rails means opening the
+	     AppleSMC IOKit service. The sandbox blocks that outright: verified by
+	     building both ways, where a sandboxed build without this exception
+	     cannot open the service at all and the whole app has nothing to show.
+	     This entitlement is the only way to keep that access inside the
+	     sandbox, and App Store review requires it to be justified. -->
+	<key>com.apple.security.temporary-exception.iokit-user-client-class</key>
+	<array>
+		<string>AppleSMCClient</string>
+	</array>
+</dict>
+</plist>
