@@ -7,9 +7,10 @@
 //  tint changes with the display it is on and with which screen has focus, and
 //  none of that is visible from inside the process.
 //
-//  The spin is then a rotation of the button's own layer, which is the cheap
-//  way round: AppKit tints the glyph once, the render server turns the finished
-//  pixels, and the app itself burns nothing to keep the blades moving. Handing
+//  The spin is then a rotation of the layer AppKit puts the tinted glyph in,
+//  which is the cheap way round: the glyph is tinted where the menu bar is
+//  drawn, the render server turns it, and the app itself burns nothing to keep
+//  the blades moving. Handing
 //  the button a new image every frame instead costs a round trip to the window
 //  server each time — it renegotiates the item's geometry on every redraw —
 //  which measured 8% of a core against 0.05% for this.
@@ -106,66 +107,98 @@ final class MenuBarRotor: NSObject {
 
     // MARK: - Spinning the layer
 
+    /// The layer AppKit hands the tinted glyph to: a sublayer of the button
+    /// whose contents are the template image, tinted at render time by whoever
+    /// draws the menu bar. That is the layer to turn, not the button's own.
+    ///
+    /// The button's layer is the root of what the menu bar hosts from another
+    /// process, and that host owns its geometry and its clock: an anchor moved
+    /// there, or a speed or time offset set on it, looks right from in here and
+    /// never reaches the screen — the rotor swung about the corner and jumped
+    /// every time the rate was re-applied. The sublayer is ours to animate, and
+    /// it already spans the button with its anchor in the middle, which is
+    /// where the image, and so the hub, is centred.
+    private var glyphLayer: CALayer? {
+        button.layer?.sublayers?.first { $0.contents != nil }
+    }
+
+    /// The layer the spin was last installed on. AppKit rebuilds the glyph's
+    /// layer when the image changes, which silently takes the spin with it.
+    private weak var spinningLayer: CALayer?
+    /// Where the blades were, in turns, at `layerAnchorTime`, and how fast they
+    /// have turned since: the rotor's position is worked out from these rather
+    /// than read back from the screen, so a re-install never moves the blades.
+    private var layerAnchorPhase: Double = 0
+    private var layerAnchorTime: CFTimeInterval = 0
+    private var layerRate: Double = 0
+
+    private func layerPhase(at time: CFTimeInterval) -> Double {
+        let turned = layerAnchorPhase + layerRate * (time - layerAnchorTime)
+        let phase = turned.truncatingRemainder(dividingBy: 1)
+        return phase < 0 ? phase + 1 : phase
+    }
+
     private func driveWithLayer() {
         link?.isPaused = true
 
         // The layer carries the whole angle, so the image under it stays upright.
         show(frame: 0)
-        centreTheAnchor()
-        if button.layer?.animation(forKey: Self.spinKey) == nil {
-            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-            spin.fromValue = 0
-            spin.toValue = -2 * Double.pi          // clockwise, like a real rotor
-            spin.duration = 1                       // one turn per second at speed 1
-            spin.repeatCount = .infinity
-            spin.isRemovedOnCompletion = false
-            spin.timingFunction = CAMediaTimingFunction(name: .linear)
-            button.layer?.add(spin, forKey: Self.spinKey)
-        }
+        layerAnchorPhase = phase
+        layerAnchorTime = CACurrentMediaTime()
+        layerRate = effectiveRevolutionsPerSecond
+        spinningLayer = nil
         applyToLayer()
+        // Setting the image can have AppKit rebuild the glyph's layer on its next
+        // display pass, after the spin went onto the old one.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isHighlighted else { return }
+            self.applyToLayer()
+        }
     }
 
-    /// Re-anchors the layer's clock: `localTime = (hostTime - beginTime) * speed
-    /// + timeOffset`, so pinning the offset to the phase the rotor is already at
-    /// and the start to now changes the rate without moving the blades.
-    private func applyToLayer() {
-        guard let layer = button.layer else { return }
-        centreTheAnchor()
-        layer.timeOffset = phaseOnLayer()
-        layer.beginTime = CACurrentMediaTime()
-        layer.speed = Float(effectiveRevolutionsPerSecond)
-    }
-
-    /// Moves the layer's anchor to the middle of the button.
+    /// Installs the spin at the current rate, starting exactly where the blades
+    /// already are. Runs on every telemetry tick, and does nothing unless the
+    /// rate has really changed or AppKit has thrown the spin away.
     ///
-    /// A view's backing layer is anchored at its corner, and a rotation turns
-    /// about the anchor — so left alone the rotor swings around the bottom left
-    /// of the status item instead of spinning on its hub. The middle of the
-    /// button is also exactly where the hub is: AppKit centres the image, and
-    /// the image is centred on the hub. Re-applied rather than set once, since
-    /// AppKit owns this geometry and rewrites it whenever the button is laid
-    /// out — which happens when the item is dragged along the menu bar.
-    private func centreTheAnchor() {
-        guard let layer = button.layer else { return }
-        let middle = CGPoint(x: layer.bounds.midX, y: layer.bounds.midY)
-        let centred = CGPoint(x: 0.5, y: 0.5)
-        guard layer.anchorPoint != centred || layer.position != middle else { return }
+    /// Speed and start both travel on the animation itself — an animation is
+    /// immutable once added, so a new rate means a new animation, handed the
+    /// phase the old one had reached as its time offset.
+    private func applyToLayer() {
+        guard let layer = glyphLayer else { return }
+        let rate = effectiveRevolutionsPerSecond
+        let intact = spinningLayer === layer && layer.animation(forKey: Self.spinKey) != nil
+        guard !intact || abs(rate - layerRate) > 0.002 else { return }
 
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer.anchorPoint = centred
-        layer.position = middle
-        CATransaction.commit()
-    }
+        let now = CACurrentMediaTime()
+        let phase = layerPhase(at: now)
 
-    /// Where the blades are now, in turns, read back from what is on screen.
-    private func phaseOnLayer() -> Double {
-        guard let layer = button.layer else { return phase }
-        guard let angle = (layer.presentation() ?? layer)
-            .value(forKeyPath: "transform.rotation.z") as? Double
-        else { return phase }
-        // The animation runs a turn per second of local time, backwards.
-        return (-angle / (2 * .pi)).truncatingRemainder(dividingBy: 1) + (angle > 0 ? 1 : 0)
+        // Clockwise, like a real rotor — which is a negative angle only where y
+        // runs up. The button's layer is flipped, and a turn expressed inside a
+        // flipped parent comes out mirrored on screen, so the sign follows the
+        // parent rather than being fixed: otherwise the blades would reverse
+        // every time the panel opened and the frames took over.
+        let clockwise = (layer.superlayer?.contentsAreFlipped() ?? false) ? 2 * Double.pi : -2 * Double.pi
+        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+        spin.fromValue = 0
+        spin.toValue = clockwise
+        spin.duration = 1                       // one turn per unit of animation time
+        spin.repeatCount = .infinity
+        spin.timingFunction = CAMediaTimingFunction(name: .linear)
+        spin.isRemovedOnCompletion = false
+        spin.fillMode = .both
+        spin.beginTime = layer.convertTime(now, from: nil)
+        spin.timeOffset = phase
+        spin.speed = Float(rate)                // zero holds the blades at `phase`
+
+        if let previous = spinningLayer, previous !== layer {
+            previous.removeAnimation(forKey: Self.spinKey)
+        }
+        layer.add(spin, forKey: Self.spinKey)   // replaces any spin already there
+        spinningLayer = layer
+
+        layerAnchorPhase = phase
+        layerAnchorTime = now
+        layerRate = rate
     }
 
     private static let spinKey = "spin"
@@ -173,13 +206,11 @@ final class MenuBarRotor: NSObject {
     // MARK: - Spinning by frames
 
     private func driveWithFrames() {
-        phase = phaseOnLayer()
-        // Back to an upright layer, and to a frame that stands where the layer
+        phase = layerPhase(at: CACurrentMediaTime())
+        // Back to an upright glyph, showing a frame that stands where the layer
         // had turned to.
-        button.layer?.speed = 1
-        button.layer?.timeOffset = 0
-        button.layer?.beginTime = 0
-        button.layer?.removeAnimation(forKey: Self.spinKey)
+        spinningLayer?.removeAnimation(forKey: Self.spinKey)
+        spinningLayer = nil
         show(frame: frameIndex(for: phase))
         lastTimestamp = 0
         applyToFrames()

@@ -15,11 +15,19 @@ enum RotorGlyph {
     /// Point size the artwork is drawn at — the size of the rotor itself.
     static let artworkSize: CGFloat = 18
     /// Side of the square each frame is cut into, and so the width the status
-    /// item is built around. As tight as a frame goes: the blades sweep a circle
-    /// 15.8 points across, and the interpolation the rotation is resampled with
-    /// carries their edges a little further still — at 17 points the corners of
-    /// the widest frames are already being shaved.
-    static let pointSize: CGFloat = 17.5
+    /// item is built around.
+    ///
+    /// Tight, but never below 17.5: the blades sweep a circle 15.8 points
+    /// across, and the interpolation the rotation is resampled with carries
+    /// their edges a little further still — at 17 the corners of the widest
+    /// frames are already being shaved. And a whole number of points, which is
+    /// what actually settles it at 18: AppKit centres the image in the button
+    /// and snaps it to the pixel grid, and the spinning layer turns about the
+    /// button's exact middle. A 17.5 point image sits a half pixel off that
+    /// middle on a 1× display, so the hub circled the axis — faintly, but
+    /// visibly. At 18 the image fills the button's width and leaves two whole
+    /// points above and below, on the grid at every scale.
+    static let pointSize: CGFloat = 18
     /// Pixels per point the master is drawn at.
     private static let sourceScale: CGFloat = 4
 
