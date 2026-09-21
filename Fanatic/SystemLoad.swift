@@ -1,6 +1,6 @@
 //
 //  SystemLoad.swift
-//  Fan
+//  Fanatic
 //
 //  CPU, memory and network figures, straight from the kernel: no shelling out
 //  to `top` or `netstat`, so a refresh costs a few microseconds.
@@ -157,7 +157,7 @@ final class SystemLoadReader {
     // MARK: Interface naming
 
     private static func primaryInterface() -> String? {
-        guard let store = SCDynamicStoreCreate(nil, "Fan" as CFString, nil, nil),
+        guard let store = SCDynamicStoreCreate(nil, "Fanatic" as CFString, nil, nil),
               let global = SCDynamicStoreCopyValue(store, "State:/Network/Global/IPv4" as CFString) as? [String: Any]
         else { return nil }
         return global["PrimaryInterface"] as? String

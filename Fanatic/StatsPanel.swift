@@ -1,6 +1,6 @@
 //
 //  StatsPanel.swift
-//  Fan
+//  Fanatic
 //
 //  The popover shown from the menu bar. It exists only while it is on screen,
 //  and only then does the telemetry service gather the full picture.

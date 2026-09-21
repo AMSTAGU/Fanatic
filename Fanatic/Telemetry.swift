@@ -1,6 +1,6 @@
 //
 //  Telemetry.swift
-//  Fan
+//  Fanatic
 //
 //  Owns the sampling cadence. The menu bar only needs the fans, so that is all
 //  that is read most of the time; the full picture is gathered only while the
@@ -58,7 +58,7 @@ final class TelemetryService {
 
     private static let historyLength = 60
 
-    private let queue = DispatchQueue(label: "com.Amaury.Fan.telemetry", qos: .utility)
+    private let queue = DispatchQueue(label: "com.Amaury.Fanatic.telemetry", qos: .utility)
     private let sensors = SensorReader()
     private let system = SystemLoadReader()
 

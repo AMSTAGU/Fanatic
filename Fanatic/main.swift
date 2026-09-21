@@ -1,6 +1,6 @@
 //
 //  main.swift
-//  Fan
+//  Fanatic
 //
 //  Explicit entry point. There is no MainMenu nib for NSApplicationMain to
 //  build the delegate from, so the app assembles itself here.

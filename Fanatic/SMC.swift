@@ -1,6 +1,6 @@
 //
 //  SMC.swift
-//  Fan
+//  Fanatic
 //
 //  Read-only client for the Apple System Management Controller.
 //  Mirrors AppleSMC's SMCKeyData_t wire format and talks to the kernel

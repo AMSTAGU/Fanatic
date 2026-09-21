@@ -1,6 +1,6 @@
 //
 //  RotorGlyph.swift
-//  Fan
+//  Fanatic
 //
 //  Renders one frame of the rotor. Nothing here picks a colour: the menu bar
 //  tints template images itself, per display and per focus state, and that is

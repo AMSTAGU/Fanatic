@@ -1,6 +1,6 @@
 //
 //  Sensors.swift
-//  Fan
+//  Fanatic
 //
 //  Everything read from the SMC: fans, temperatures and power rails.
 //

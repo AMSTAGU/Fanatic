@@ -1,6 +1,6 @@
 //
 //  MenuBarRotor.swift
-//  Fan
+//  Fanatic
 //
 //  The menu bar rotor. The glyph is handed to the status item as a template
 //  image so that AppKit — not this app — decides its colour: the menu bar's

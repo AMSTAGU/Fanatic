@@ -1,6 +1,6 @@
 //
 //  AppDelegate.swift
-//  Fan
+//  Fanatic
 //
 //  Wires the telemetry service to the menu bar rotor and the stats panel, and
 //  keeps both asleep whenever nobody can see them. This is a menu bar only
@@ -188,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 try SMAppService.mainApp.register()
             }
         } catch {
-            NSLog("Fan: launch at login failed — \(error.localizedDescription)")
+            NSLog("Fanatic: launch at login failed — \(error.localizedDescription)")
         }
         store.launchesAtLogin = SMAppService.mainApp.status == .enabled
     }
