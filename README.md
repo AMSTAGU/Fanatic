@@ -36,7 +36,8 @@ No window, no Dock icon, no helper tool, no root access. Just the rotor.
 | **Fans** | Speed of each fan in RPM, with a gauge relative to its maximum speed |
 | **CPU** | Total load, a 60-second sparkline, and the system / user / idle split |
 | **Temperatures** | Peak and average per sensor group: CPU performance cores, CPU efficiency cores, GPU, chassis, battery, SSD, Wi-Fi |
-| **Memory** | Usage, memory pressure, app memory, wired and compressed memory |
+| **Memory** | Usage, memory pressure, app memory, wired and compressed memory, swap |
+| **Hungry apps** | The five apps weighing most on the Mac, by their share of CPU plus their share of RAM, with their icon, CPU and memory |
 | **Network** | Active interface, local IP address, upload and download rates |
 | **Power** | Total system power, AC input and battery rails (when available) |
 
@@ -89,7 +90,7 @@ To keep it, copy `Fanatic.app` into your Applications folder.
 
 ## Sandbox and permissions
 
-Fanatic runs inside the App Sandbox. It needs a single exception to reach the fan and temperature sensors:
+Fanatic runs inside the App Sandbox. It needs one exception to reach the fan and temperature sensors:
 
 ```xml
 <key>com.apple.security.temporary-exception.iokit-user-client-class</key>
@@ -99,6 +100,15 @@ Fanatic runs inside the App Sandbox. It needs a single exception to reach the fa
 ```
 
 Without it, the sandbox blocks the `AppleSMC` service entirely and the app has nothing to show. Access is **read-only**: Fanatic never writes to the SMC and cannot change fan speeds.
+
+A second exception lets the panel weigh apps by the same memory figure Activity Monitor shows:
+
+```xml
+<key>com.apple.security.temporary-exception.sbpl</key>
+<string>(allow process-info-rusage)</string>
+```
+
+Sandboxed apps may only read another app's resident size. That figure leaves out compressed and swapped memory, so on a Mac under pressure it can read ten times too low and put apps in the wrong order. If you remove this exception, Fanatic falls back to the resident size instead of failing. The App Store is unlikely to accept this exception.
 
 ## Project structure
 

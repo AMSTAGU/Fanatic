@@ -51,6 +51,11 @@ struct StatsPanel: View {
             }
             divider
             memory
+            // Right under the CPU and memory figures it accounts for.
+            if !store.telemetry.topApps.isEmpty {
+                divider
+                apps
+            }
             divider
             network
             if !store.telemetry.power.isEmpty {
@@ -89,6 +94,20 @@ struct StatsPanel: View {
             Row("Mémoire des apps", Format.bytes(memory.app))
             Row("Mémoire réservée", Format.bytes(memory.wired))
             Row("Compressée", Format.bytes(memory.compressed))
+            Row("Swap", Format.bytes(memory.swapUsed))
+        }
+    }
+
+    private var apps: some View {
+        Section(icon: "square.grid.2x2", title: "Apps gourmandes", value: nil) {
+            // The icons make these rows taller than plain text rows; without
+            // the extra room the first one crowds the title.
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(store.telemetry.topApps) { app in
+                    AppRow(app: app)
+                }
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -213,6 +232,37 @@ private struct Row: View {
             Text(value).monospacedDigit().lineLimit(1)
         }
         .font(.system(size: 11))
+        .foregroundStyle(.secondary)
+    }
+}
+
+/// Laid out like `Row`, with the app's icon in front: memory as the quieter
+/// detail, CPU as the value.
+private struct AppRow: View {
+    let app: AppUsage
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Group {
+                if let icon = app.icon {
+                    Image(nsImage: icon).resizable()
+                } else {
+                    Image(systemName: "app.dashed").foregroundStyle(.tertiary)
+                }
+            }
+            .frame(width: 14, height: 14)
+
+            Text(app.name).lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 8)
+            Text(Format.bytes(app.bytes)).foregroundStyle(.tertiary).lineLimit(1)
+            Text(Format.percent(app.cpu))
+                .lineLimit(1)
+                // Wide enough for "100.0 %", so the memory column stays put
+                // as the CPU figure changes width.
+                .frame(minWidth: 44, alignment: .trailing)
+        }
+        .font(.system(size: 11))
+        .monospacedDigit()
         .foregroundStyle(.secondary)
     }
 }

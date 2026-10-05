@@ -14,5 +14,14 @@
 	<array>
 		<string>AppleSMCClient</string>
 	</array>
+	<!-- The panel ranks apps by memory. The figure Activity Monitor shows
+	     (phys_footprint, from proc_pid_rusage) is denied to sandboxed apps;
+	     only the resident size gets through, and that leaves out compressed
+	     and swapped pages, so under pressure it reads a fraction of the truth
+	     and puts apps in the wrong order. This allows that one read-only call
+	     and nothing else. The App Store is unlikely to accept it: without it,
+	     the app falls back to the resident size rather than failing. -->
+	<key>com.apple.security.temporary-exception.sbpl</key>
+	<string>(allow process-info-rusage)</string>
 </dict>
 </plist>

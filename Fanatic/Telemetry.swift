@@ -15,6 +15,7 @@ struct Telemetry {
     var power: [PowerRail] = []
     var cpu = CPULoad()
     var memory = MemoryLoad()
+    var topApps: [AppUsage] = []
     var network = NetworkLoad()
     /// Recent CPU busy fractions, oldest first, for the panel's sparkline.
     var cpuHistory: [Double] = []
@@ -57,6 +58,12 @@ final class TelemetryService {
     private static let activeLeeway: DispatchTimeInterval = .milliseconds(100)
 
     private static let historyLength = 60
+    private static let topAppCount = 5
+    /// Walking every process tree costs a few milliseconds, and which apps weigh
+    /// most changes slowly; no need to redo it every second. Right after the
+    /// panel opens, though, the first CPU figure is wanted as soon as possible.
+    private static let topAppsInterval: CFAbsoluteTime = 3
+    private static let firstTopAppsInterval: CFAbsoluteTime = 1
 
     private let queue = DispatchQueue(label: "com.Amaury.Fanatic.telemetry", qos: .utility)
     private let sensors = SensorReader()
@@ -67,6 +74,7 @@ final class TelemetryService {
     private var hasDiscovered = false
     private var hasSweptDetail = false
     private var history: [Double] = []
+    private var nextTopAppsSample: CFAbsoluteTime = 0
     /// The running picture. Keeping it between ticks means the panel opens
     /// already populated instead of filling in — and visibly growing — a second
     /// later.
@@ -99,7 +107,11 @@ final class TelemetryService {
             self.isDetailed = detailed
             // Throughput measured since the panel was last open would be an
             // average over minutes; start the rate afresh.
-            if detailed { self.system.resetNetworkBaseline() }
+            if detailed {
+                self.system.resetNetworkBaseline()
+                self.system.resetAppBaseline()
+                self.nextTopAppsSample = 0
+            }
             if self.timer != nil { self.schedule() }
         }
     }
@@ -149,6 +161,18 @@ final class TelemetryService {
 
         if detailed {
             current.memory = system.memoryLoad()
+            let now = CFAbsoluteTimeGetCurrent()
+            if now >= nextTopAppsSample {
+                let measuresCPU = system.hasAppBaseline
+                let apps = system.topApps(limit: Self.topAppCount)
+                // A reading with no CPU yet would rank by memory alone and then
+                // reshuffle a second later; keep the last list until then,
+                // unless there is none at all.
+                if measuresCPU || current.topApps.isEmpty { current.topApps = apps }
+                let interval = measuresCPU ? Self.topAppsInterval : Self.firstTopAppsInterval
+                // Ticks arrive with some leeway; don't let one land just short.
+                nextTopAppsSample = now + interval - 0.25
+            }
             current.network = system.networkLoad()
             hasSweptDetail = true
         }
