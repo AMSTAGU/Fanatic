@@ -272,9 +272,15 @@ final class SystemLoadReader {
             let elapsed = now - previous.timestamp
             if elapsed > 0.05 {
                 // Counters are 32-bit on some interfaces and wrap; ignore the
-                // step backwards rather than reporting a negative rate.
-                load.bytesInPerSecond = max(0, Double(totalIn &- previous.inBytes)) / elapsed
-                load.bytesOutPerSecond = max(0, Double(totalOut &- previous.outBytes)) / elapsed
+                // step backwards rather than reporting a negative rate. The
+                // check comes before subtracting: unsigned, the step back
+                // wraps to an absurd rate that crashes the panel's formatter.
+                if totalIn >= previous.inBytes {
+                    load.bytesInPerSecond = Double(totalIn - previous.inBytes) / elapsed
+                }
+                if totalOut >= previous.outBytes {
+                    load.bytesOutPerSecond = Double(totalOut - previous.outBytes) / elapsed
+                }
             }
         }
         previousCounters = (totalIn, totalOut, now)
