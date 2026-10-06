@@ -50,6 +50,27 @@ struct AppUsage: Identifiable {
     var bytes: UInt64 = 0
 }
 
+/// A process the system cannot confuse with a later one: PIDs are recycled,
+/// a PID together with its start time is not.
+struct ProcessIdentity: Hashable {
+    let pid: pid_t
+    let started: UInt64          // microseconds since 1970
+}
+
+/// A process tree running behind the user's back: no window, no Dock tile, no
+/// menu bar item, launched by launchd rather than by any app on screen. A
+/// booted simulator is the typical case — hundreds of processes and no sign of
+/// them anywhere.
+struct BackgroundProcess: Identifiable {
+    let id: ProcessIdentity
+    let name: String
+    let path: String
+    let icon: NSImage?
+    var cpu = 0.0           // 0...1 of the whole machine, like `AppUsage.cpu`
+    var bytes: UInt64 = 0
+    var processCount = 0
+}
+
 struct NetworkLoad {
     var interfaceName = "—"        // e.g. "Wi-Fi"
     var address: String?
@@ -127,15 +148,16 @@ final class SystemLoadReader {
                           swapUsed: swap.xsu_used)
     }
 
-    /// Whether `topApps` has a previous reading to measure CPU against.
+    /// Whether `processLoad` has a previous reading to measure CPU against.
     var hasAppBaseline: Bool { previousAppCPU != nil }
 
-    /// The Dock applications weighing most on the machine, heaviest first.
+    /// The Dock applications weighing most on the machine, and the background
+    /// processes worth knowing about, each heaviest first.
     ///
-    /// The weight is the app's share of all CPU cores plus its share of RAM:
-    /// one busy core out of ten counts as much as a tenth of memory. A purely
-    /// memory ranking would be all idle editors and browsers; a purely CPU one
-    /// would reshuffle every second.
+    /// The weight is a share of all CPU cores plus a share of RAM: one busy
+    /// core out of ten counts as much as a tenth of memory. A purely memory
+    /// ranking would be all idle editors and browsers; a purely CPU one would
+    /// reshuffle every second.
     ///
     /// Each app is charged for its whole process tree, so a browser counts its
     /// renderer helpers and a terminal the shells running in it. XPC services
@@ -143,8 +165,8 @@ final class SystemLoadReader {
     ///
     /// CPU is measured since the previous call, so the first call after
     /// `resetAppBaseline` reports none.
-    func topApps(limit: Int) -> [AppUsage] {
-        let children = Self.processTree()
+    func processLoad(appLimit: Int, backgroundLimit: Int) -> (apps: [AppUsage], background: [BackgroundProcess]) {
+        let table = Self.processTable()
         let now = CFAbsoluteTimeGetCurrent()
         let previous = previousAppCPU
         let elapsed = previous.map { now - $0.timestamp } ?? 0
@@ -152,16 +174,13 @@ final class SystemLoadReader {
         let memory = Double(ProcessInfo.processInfo.physicalMemory)
         var cpuTimes: [pid_t: UInt64] = [:]
 
-        let apps = NSWorkspace.shared.runningApplications.compactMap { app -> AppUsage? in
-            guard app.activationPolicy == .regular else { return nil }
-            var usage = AppUsage(id: app.processIdentifier,
-                                 name: app.localizedName ?? app.bundleIdentifier ?? "—",
-                                 icon: app.icon)
-            var busy: UInt64 = 0
-            var pending = [app.processIdentifier]
+        func measure(_ root: pid_t) -> (cpu: Double, bytes: UInt64, count: Int) {
+            var busy: UInt64 = 0, bytes: UInt64 = 0, count = 0
+            var pending = [root]
             while let pid = pending.popLast() {
                 if let reading = Self.usage(of: pid) {
-                    usage.bytes += reading.bytes
+                    bytes += reading.bytes
+                    count += 1
                     cpuTimes[pid] = reading.cpuNanoseconds
                     // A process that started since the last call ran entirely
                     // within the interval.
@@ -171,17 +190,48 @@ final class SystemLoadReader {
                     }
                 }
                 // launchd and the kernel are their own ancestors; never walk back up.
-                pending += (children[pid] ?? []).filter { $0 > 1 && $0 != pid }
+                pending += (table.children[pid] ?? []).filter { $0 > 1 && $0 != pid }
             }
-            if elapsed > 0.05 {
-                usage.cpu = min(Double(busy) / (elapsed * 1e9) / cores, 1)
-            }
-            return usage.bytes > 0 ? usage : nil
+            let cpu = elapsed > 0.05 ? min(Double(busy) / (elapsed * 1e9) / cores, 1) : 0
+            return (cpu, bytes, count)
+        }
+
+        let running = NSWorkspace.shared.runningApplications
+        let apps = running.compactMap { app -> AppUsage? in
+            guard app.activationPolicy == .regular else { return nil }
+            let tree = measure(app.processIdentifier)
+            guard tree.bytes > 0 else { return nil }
+            return AppUsage(id: app.processIdentifier,
+                            name: app.localizedName ?? app.bundleIdentifier ?? "—",
+                            icon: app.icon, cpu: tree.cpu, bytes: tree.bytes)
+        }
+
+        // Anything with a Dock tile or a menu bar item is in plain sight, and so
+        // are the XPC services living inside its bundle.
+        let visible = running.filter { $0.activationPolicy != .prohibited }
+        let visiblePIDs = Set(visible.map(\.processIdentifier))
+        let visibleBundles = visible.compactMap { $0.bundleURL.map { $0.path + "/" } }
+        let user = getuid()
+
+        var background: [BackgroundProcess] = []
+        for entry in table.entries.values
+        where entry.parent == 1 && entry.owner == user
+            && entry.identity.pid != getpid() && !visiblePIDs.contains(entry.identity.pid) {
+            guard let path = Self.executablePath(of: entry.identity.pid),
+                  !Self.belongsToSystem(path),
+                  !visibleBundles.contains(where: path.hasPrefix) else { continue }
+            let tree = measure(entry.identity.pid)
+            guard tree.cpu >= Self.backgroundCPUFloor || tree.bytes >= Self.backgroundMemoryFloor else { continue }
+            let label = describe(path)
+            background.append(BackgroundProcess(id: entry.identity, name: label.name, path: path,
+                                                icon: label.icon, cpu: tree.cpu, bytes: tree.bytes,
+                                                processCount: tree.count))
         }
 
         previousAppCPU = (cpuTimes, now)
-        let weight = { (app: AppUsage) in app.cpu + Double(app.bytes) / memory }
-        return Array(apps.sorted { weight($0) > weight($1) }.prefix(limit))
+        let weight = { (cpu: Double, bytes: UInt64) in cpu + Double(bytes) / memory }
+        return (Array(apps.sorted { weight($0.cpu, $0.bytes) > weight($1.cpu, $1.bytes) }.prefix(appLimit)),
+                Array(background.sorted { weight($0.cpu, $0.bytes) > weight($1.cpu, $1.bytes) }.prefix(backgroundLimit)))
     }
 
     /// Forgets the CPU times, so the next reading starts a fresh interval
@@ -190,23 +240,122 @@ final class SystemLoadReader {
         previousAppCPU = nil
     }
 
-    /// Children of every process, by parent PID. Listing processes this way is
-    /// allowed inside the sandbox, unlike `proc_listallpids`.
-    private static func processTree() -> [pid_t: [pid_t]] {
+    // MARK: Background processes
+
+    /// Below both of these, a background process is part of the furniture:
+    /// a sync agent or an updater sitting idle is not worth a row.
+    private static let backgroundCPUFloor = 0.01
+    private static let backgroundMemoryFloor: UInt64 = 250 << 20
+
+    /// Names and icons, by executable path: looking up an icon reads the
+    /// bundle from disk, and the same handful of processes come back every
+    /// few seconds.
+    private var descriptions: [String: (name: String, icon: NSImage?)] = [:]
+
+    /// Ends a background process and everything it launched: asked to quit
+    /// first, so it can clean up. Returns the processes it signalled, to hand
+    /// to `forceQuit` for whatever is still around a moment later.
+    func terminate(_ identity: ProcessIdentity) -> [ProcessIdentity] {
+        // The PID may have been reused since the panel last looked.
+        guard Self.processTable().entries[identity.pid]?.identity == identity else { return [] }
+
+        // Frozen first, so it cannot relaunch the children being stopped
+        // under it — launchd_sim would otherwise bring them straight back, as
+        // orphans nobody can trace to it any more.
+        guard kill(identity.pid, SIGSTOP) == 0 else {
+            NSLog("Fanatic: cannot stop process \(identity.pid) — \(String(cString: strerror(errno)))")
+            return []
+        }
+        defer { kill(identity.pid, SIGCONT) }
+
+        let table = Self.processTable()
+        var tree: [ProcessIdentity] = []
+        var pending = [identity.pid]
+        while let pid = pending.popLast() {
+            if let entry = table.entries[pid] { tree.append(entry.identity) }
+            pending += (table.children[pid] ?? []).filter { $0 > 1 && $0 != pid }
+        }
+        for member in tree { kill(member.pid, SIGTERM) }
+        return tree
+    }
+
+    /// Kills whatever `terminate` asked to quit and is still running.
+    func forceQuit(_ tree: [ProcessIdentity]) {
+        let entries = Self.processTable().entries
+        for member in tree where entries[member.pid]?.identity == member {
+            kill(member.pid, SIGKILL)
+        }
+    }
+
+    /// Daemons and agents that ship with macOS. Plenty of them run as the user,
+    /// and stopping one at random can take the whole session down with it.
+    private static func belongsToSystem(_ path: String) -> Bool {
+        ["/System/", "/usr/", "/bin/", "/sbin/", "/private/", "/Library/Apple/"]
+            .contains(where: path.hasPrefix)
+    }
+
+    /// The name people know the process by: the simulator runtime it belongs
+    /// to, else the app bundle it ships in, else its own executable name.
+    private func describe(_ path: String) -> (name: String, icon: NSImage?) {
+        if let cached = descriptions[path] { return cached }
+
+        let components = path.split(separator: "/").map(String.init)
+        let description: (name: String, icon: NSImage?)
+        if let runtime = components.first(where: { $0.hasSuffix(".simruntime") }) {
+            // ".../iOS 27.0.simruntime/.../sbin/launchd_sim"
+            let simulator = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.iphonesimulator")
+            description = ("Simulateur \((runtime as NSString).deletingPathExtension)",
+                           simulator.map { NSWorkspace.shared.icon(forFile: $0.path) })
+        } else if let index = components.firstIndex(where: { $0.hasSuffix(".app") }) {
+            let bundle = "/" + components[...index].joined(separator: "/")
+            description = ((components[index] as NSString).deletingPathExtension,
+                           NSWorkspace.shared.icon(forFile: bundle))
+        } else {
+            description = (components.last ?? path, nil)
+        }
+        descriptions[path] = description
+        return description
+    }
+
+    private static func executablePath(of pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    // MARK: Process table
+
+    private struct ProcessEntry {
+        let identity: ProcessIdentity
+        let parent: pid_t
+        let owner: uid_t
+    }
+
+    /// Every process, by PID, and the children of each. Listing processes this
+    /// way is allowed inside the sandbox, unlike `proc_listallpids`.
+    private static func processTable() -> (entries: [pid_t: ProcessEntry], children: [pid_t: [pid_t]]) {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
         var length = 0
-        guard sysctl(&mib, 3, nil, &length, nil, 0) == 0 else { return [:] }
+        guard sysctl(&mib, 3, nil, &length, nil, 0) == 0 else { return ([:], [:]) }
         // Headroom for processes started between the two calls.
         var processes = [kinfo_proc](repeating: kinfo_proc(),
                                      count: length / MemoryLayout<kinfo_proc>.stride + 32)
         length = processes.count * MemoryLayout<kinfo_proc>.stride
-        guard sysctl(&mib, 3, &processes, &length, nil, 0) == 0 else { return [:] }
+        guard sysctl(&mib, 3, &processes, &length, nil, 0) == 0 else { return ([:], [:]) }
 
+        var entries: [pid_t: ProcessEntry] = [:]
         var children: [pid_t: [pid_t]] = [:]
         for process in processes.prefix(length / MemoryLayout<kinfo_proc>.stride) {
-            children[process.kp_eproc.e_ppid, default: []].append(process.kp_proc.p_pid)
+            let pid = process.kp_proc.p_pid
+            let started = process.kp_proc.p_un.__p_starttime
+            entries[pid] = ProcessEntry(
+                identity: ProcessIdentity(pid: pid,
+                                          started: UInt64(started.tv_sec) * 1_000_000 + UInt64(started.tv_usec)),
+                parent: process.kp_eproc.e_ppid,
+                owner: process.kp_eproc.e_ucred.cr_uid)
+            children[process.kp_eproc.e_ppid, default: []].append(pid)
         }
-        return children
+        return (entries, children)
     }
 
     /// Memory is the figure Activity Monitor shows in its Memory column: it

@@ -17,13 +17,35 @@ final class TelemetryStore {
     /// Set from the screen the panel is about to open on, so a Mac with more
     /// sensors than fit simply scrolls instead of running off the display.
     var maximumHeight: CGFloat = 900
+    /// Background processes asked to quit, and when. They are hidden straight
+    /// away rather than lingering until the next process sweep; one still
+    /// running a few seconds later comes back, since stopping it failed.
+    var terminating: [ProcessIdentity: Date] = [:]
+
+    var backgroundProcesses: [BackgroundProcess] {
+        let cutoff = Date(timeIntervalSinceNow: -5)
+        return telemetry.backgroundProcesses.filter { (terminating[$0.id] ?? .distantPast) < cutoff }
+    }
 }
 
 struct StatsPanel: View {
 
     let store: TelemetryStore
 
+    var onTerminate: (BackgroundProcess) -> Void
     var onToggleLaunchAtLogin: () -> Void
+
+    /// The order of the background rows while the pointer is over them. Two
+    /// processes of similar weight trade places from one sweep to the next,
+    /// and a row must not slide away just as it is being clicked.
+    @State private var heldBackgroundOrder: [ProcessIdentity]?
+
+    private var backgroundProcesses: [BackgroundProcess] {
+        let current = store.backgroundProcesses
+        guard let order = heldBackgroundOrder else { return current }
+        let byID = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        return order.compactMap { byID[$0] } + current.filter { !order.contains($0.id) }
+    }
     var onQuit: () -> Void
 
     var body: some View {
@@ -55,6 +77,10 @@ struct StatsPanel: View {
             if !store.telemetry.topApps.isEmpty {
                 divider
                 apps
+            }
+            if !store.backgroundProcesses.isEmpty {
+                divider
+                background
             }
             divider
             network
@@ -108,6 +134,20 @@ struct StatsPanel: View {
                 }
             }
             .padding(.top, 4)
+        }
+    }
+
+    private var background: some View {
+        Section(icon: "eye.slash", title: "En arrière-plan", value: nil) {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(backgroundProcesses) { process in
+                    BackgroundRow(process: process) { onTerminate(process) }
+                }
+            }
+            .padding(.top, 4)
+            .onHover { inside in
+                heldBackgroundOrder = inside ? backgroundProcesses.map(\.id) : nil
+            }
         }
     }
 
@@ -264,6 +304,85 @@ private struct AppRow: View {
         .font(.system(size: 11))
         .monospacedDigit()
         .foregroundStyle(.secondary)
+    }
+}
+
+/// Laid out like `AppRow`. Hovering fades the row and swaps the CPU figure for
+/// a cross; a click anywhere on it asks to confirm, since stopping the whole
+/// process tree cannot be undone. Moving away drops the question.
+private struct BackgroundRow: View {
+    let process: BackgroundProcess
+    var onTerminate: () -> Void
+
+    @State private var isHovered = false
+    @State private var isConfirming = false
+
+    var body: some View {
+        Group {
+            if isConfirming { confirmation } else { summary }
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 11))
+        .monospacedDigit()
+        .foregroundStyle(.secondary)
+        .frame(minHeight: 16)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            isHovered = inside
+            if !inside { isConfirming = false }
+        }
+        .help(process.processCount > 1
+              ? "\(process.processCount) processus\n\(process.path)"
+              : process.path)
+    }
+
+    private var summary: some View {
+        Button {
+            isConfirming = true
+        } label: {
+            HStack(spacing: 6) {
+                Group {
+                    if let icon = process.icon {
+                        Image(nsImage: icon).resizable()
+                    } else {
+                        Image(systemName: "gearshape").foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(width: 14, height: 14)
+
+                Text(process.name).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 8)
+                Text(Format.bytes(process.bytes)).foregroundStyle(.tertiary).lineLimit(1)
+                // Both stay laid out, so the row does not shift as the pointer
+                // comes and goes.
+                ZStack(alignment: .trailing) {
+                    Text(Format.percent(process.cpu))
+                        .lineLimit(1)
+                        .opacity(isHovered ? 0 : 1)
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .opacity(isHovered ? 1 : 0)
+                }
+                .frame(minWidth: 44, alignment: .trailing)
+            }
+            .opacity(isHovered ? 0.4 : 1)
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Quitter \(process.name)")
+    }
+
+    private var confirmation: some View {
+        HStack(spacing: 8) {
+            Text("Quitter \(process.name) ?").lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 4)
+            Button("Annuler") { isConfirming = false }
+            Button("Quitter") {
+                isConfirming = false
+                onTerminate()
+            }
+            .foregroundStyle(.primary)
+            .fontWeight(.semibold)
+        }
     }
 }
 

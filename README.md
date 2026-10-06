@@ -38,6 +38,7 @@ No window, no Dock icon, no helper tool, no root access. Just the rotor.
 | **Temperatures** | Peak and average per sensor group: CPU performance cores, CPU efficiency cores, GPU, chassis, battery, SSD, Wi-Fi |
 | **Memory** | Usage, memory pressure, app memory, wired and compressed memory, swap |
 | **Hungry apps** | The five apps weighing most on the Mac, by their share of CPU plus their share of RAM, with their icon, CPU and memory |
+| **In the background** | Process trees running with no window, Dock tile or menu bar item — a booted simulator, an orphaned helper — once they use 1% of the CPU or 250 MB of memory. Hover a row and click it to quit the whole tree, after confirming |
 | **Network** | Active interface, local IP address, upload and download rates |
 | **Power** | Total system power, AC input and battery rails (when available) |
 
@@ -101,14 +102,21 @@ Fanatic runs inside the App Sandbox. It needs one exception to reach the fan and
 
 Without it, the sandbox blocks the `AppleSMC` service entirely and the app has nothing to show. Access is **read-only**: Fanatic never writes to the SMC and cannot change fan speeds.
 
-A second exception lets the panel weigh apps by the same memory figure Activity Monitor shows:
+Two more exceptions, both in the sandbox profile, serve the process sections of the panel:
 
 ```xml
 <key>com.apple.security.temporary-exception.sbpl</key>
-<string>(allow process-info-rusage)</string>
+<array>
+    <string>(allow process-info-rusage)</string>
+    <string>(allow signal (target others))</string>
+</array>
 ```
 
-Sandboxed apps may only read another app's resident size. That figure leaves out compressed and swapped memory, so on a Mac under pressure it can read ten times too low and put apps in the wrong order. If you remove this exception, Fanatic falls back to the resident size instead of failing. The App Store is unlikely to accept this exception.
+The first lets the panel weigh apps by the same memory figure Activity Monitor shows. Sandboxed apps may only read another app's resident size. That figure leaves out compressed and swapped memory, so on a Mac under pressure it can read ten times too low and put apps in the wrong order. If you remove it, Fanatic falls back to the resident size instead of failing.
+
+The second lets the panel quit a background process. The kernel still refuses processes owned by root or by another user, and Fanatic only offers processes that are not part of macOS (nothing under `/System`, `/usr`, `/bin`, `/sbin` or `/private`). It sends `SIGTERM` to the whole tree, then `SIGKILL` to whatever is still running two seconds later.
+
+The App Store is unlikely to accept either exception.
 
 ## Project structure
 

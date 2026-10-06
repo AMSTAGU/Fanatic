@@ -16,6 +16,7 @@ struct Telemetry {
     var cpu = CPULoad()
     var memory = MemoryLoad()
     var topApps: [AppUsage] = []
+    var backgroundProcesses: [BackgroundProcess] = []
     var network = NetworkLoad()
     /// Recent CPU busy fractions, oldest first, for the panel's sparkline.
     var cpuHistory: [Double] = []
@@ -59,6 +60,10 @@ final class TelemetryService {
 
     private static let historyLength = 60
     private static let topAppCount = 5
+    private static let backgroundCount = 5
+    /// How long a background process gets to quit on its own before it is
+    /// killed outright.
+    private static let terminationGrace: TimeInterval = 2
     /// Walking every process tree costs a few milliseconds, and which apps weigh
     /// most changes slowly; no need to redo it every second. Right after the
     /// panel opens, though, the first CPU figure is wanted as soon as possible.
@@ -116,6 +121,23 @@ final class TelemetryService {
         }
     }
 
+    /// Ends a background process tree: asked to quit first, then killed if
+    /// it is still running once the grace period is over.
+    func terminate(_ process: BackgroundProcess) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let tree = self.system.terminate(process.id)
+            guard !tree.isEmpty else { return }
+            self.queue.asyncAfter(deadline: .now() + Self.terminationGrace) { [weak self] in
+                guard let self else { return }
+                self.system.forceQuit(tree)
+                // Show the CPU and memory it gave back on the next tick, not
+                // whenever the process list was next due.
+                self.nextTopAppsSample = 0
+            }
+        }
+    }
+
     // MARK: - Timer
 
     private func schedule() {
@@ -164,11 +186,15 @@ final class TelemetryService {
             let now = CFAbsoluteTimeGetCurrent()
             if now >= nextTopAppsSample {
                 let measuresCPU = system.hasAppBaseline
-                let apps = system.topApps(limit: Self.topAppCount)
+                let load = system.processLoad(appLimit: Self.topAppCount,
+                                              backgroundLimit: Self.backgroundCount)
                 // A reading with no CPU yet would rank by memory alone and then
                 // reshuffle a second later; keep the last list until then,
                 // unless there is none at all.
-                if measuresCPU || current.topApps.isEmpty { current.topApps = apps }
+                if measuresCPU || current.topApps.isEmpty { current.topApps = load.apps }
+                if measuresCPU || current.backgroundProcesses.isEmpty {
+                    current.backgroundProcesses = load.background
+                }
                 let interval = measuresCPU ? Self.topAppsInterval : Self.firstTopAppsInterval
                 // Ticks arrive with some leeway; don't let one land just short.
                 nextTopAppsSample = now + interval - 0.25

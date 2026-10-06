@@ -66,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func buildPanel() {
         let panel = StatsPanel(
             store: store,
+            onTerminate: { [weak self] process in self?.terminate(process) },
             onToggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
             onQuit: { NSApp.terminate(nil) })
 
@@ -178,6 +179,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let fan = telemetry.leadFan else { return "Aucun ventilateur détecté" }
         guard !fan.isStopped else { return "Ventilateur à l’arrêt" }
         return "\(Int(fan.rpm.rounded())) tr/min"
+    }
+
+    private func terminate(_ process: BackgroundProcess) {
+        store.terminating[process.id] = Date()
+        telemetry.terminate(process)
     }
 
     private func toggleLaunchAtLogin() {

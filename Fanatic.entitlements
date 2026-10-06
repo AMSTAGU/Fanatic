@@ -21,7 +21,15 @@
 	     and puts apps in the wrong order. This allows that one read-only call
 	     and nothing else. The App Store is unlikely to accept it: without it,
 	     the app falls back to the resident size rather than failing. -->
+	<!-- The panel also offers to stop background processes the user owns,
+	     such as a booted simulator left running. The sandbox forbids
+	     signalling any process outside the app; this lifts that, and only
+	     that. The kernel still refuses processes owned by another user or
+	     by root, and the app only offers ones that are not part of macOS. -->
 	<key>com.apple.security.temporary-exception.sbpl</key>
-	<string>(allow process-info-rusage)</string>
+	<array>
+		<string>(allow process-info-rusage)</string>
+		<string>(allow signal (target others))</string>
+	</array>
 </dict>
 </plist>
